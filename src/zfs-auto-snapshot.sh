@@ -43,6 +43,7 @@ opt_pre_snapshot=''
 opt_post_snapshot=''
 opt_do_snapshots=1
 opt_min_size=0
+opt_local=0
 
 # Global summary statistics.
 DESTRUCTION_COUNT='0'
@@ -65,6 +66,7 @@ print_usage ()
   -h, --help         Print this usage message.
   -k, --keep=NUM     Keep NUM recent snapshots and destroy older snapshots.
   -l, --label=LAB    LAB is usually 'hourly', 'daily', or 'monthly'.
+  -L, --local-time   Use local time for snapshot names instead of UTC.
   -p, --prefix=PRE   PRE is 'zfs-auto-snap' by default.
   -q, --quiet        Suppress warnings and notices at the console.
       --send-full=F  Send zfs full backup. Unimplemented.
@@ -294,6 +296,10 @@ do
 		(-l|--label)
 			opt_label="$2"
 			shift 2
+			;;
+		(-L|--local-time)
+			opt_local=1
+			shift 1
 			;;
 		(-m|--min-size)
 			opt_min_size="$2"
@@ -585,7 +591,12 @@ SNAPPROP="-o com.sun:auto-snapshot-desc='$opt_event'"
 # ISO style date; fifteen characters: YYYY-MM-DD-HHMM
 # On Solaris %H%M expands to 12h34.
 # We use the shortfirm -u here because --utc is not supported on macos.
-DATE=$(date -u +%F-%H%M)
+if [ $opt_local	-eq 1]
+then
+	DATE=$(date +%F-%H%M)
+else
+	DATE=$(date -u +%F-%H%M)
+fi
 
 # The snapshot name after the @ symbol.
 SNAPNAME="${opt_prefix:+$opt_prefix$opt_sep}${opt_label:+$opt_label}-$DATE"
