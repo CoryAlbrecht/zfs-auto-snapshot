@@ -233,12 +233,12 @@ else
 fi
 
 GETOPT=$($GETOPT_BIN \
-  --longoptions=default-exclude,dry-run,fast,skip-scrub,recursive \
+  --longoptions=default-exclude,dry-run,fast,local-time,skip-scrub,recursive \
   --longoptions=event:,keep:,label:,prefix:,sep: \
   --longoptions=debug,help,quiet,syslog,verbose \
   --longoptions=pre-snapshot:,post-snapshot:,destroy-only \
   --longoptions=min-size: \
-  --options=dnshe:l:k:p:rs:qgvm: \
+  --options=dnshe:l:Lk:p:rs:qgvm: \
   -- "$@" ) \
   || exit 128
 
@@ -591,7 +591,7 @@ SNAPPROP="-o com.sun:auto-snapshot-desc='$opt_event'"
 # ISO style date; fifteen characters: YYYY-MM-DD-HHMM
 # On Solaris %H%M expands to 12h34.
 # We use the shortfirm -u here because --utc is not supported on macos.
-if [ $opt_local	-eq 1]
+if [ $opt_local	-eq 1 ]
 then
 	DATE=$(date +%F-%H%M)
 else
