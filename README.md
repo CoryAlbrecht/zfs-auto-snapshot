@@ -3,14 +3,14 @@
 Currently, [zfsonlinux/zfs-auto-snapshot](https://github.com/zfsonlinux/zfs-auto-snapshot) is no longer being actively developed. However, it remains a powerful and straightforward shell script tool. Therefore, this fork incorporates several features from other branches.
 
 What has changed in this fork:
-- Disable default recursive snapshot strategy. 
+- Disable default recursive snapshot strategy.
 - Use localtime by default instead of UTC.
 - Subsequent snapshots will not be aborted even if the pre-snapshot command fails once.
 - Add `-c` option to detect bytes_written firstly in order to prevent duplicate snapshot and potential disk wake-ups.
 - Add `--default-exclude` options to default cron scripts. So only datasets with `com.sun:auto-snapshot=true` will be snapshotted.
 
 ```
-$ zfs-auto-snapshot -h                                                                
+$ zfs-auto-snapshot -h
 Usage: /usr/local/sbin/zfs-auto-snapshot [options] [-l label] <'//' | name [name...]>
   --default-exclude  Exclude datasets if com.sun:auto-snapshot is unset.
   -c, --changed      Snap only if data written > 0.
@@ -22,6 +22,7 @@ Usage: /usr/local/sbin/zfs-auto-snapshot [options] [-l label] <'//' | name [name
   -h, --help         Print this usage message.
   -k, --keep=NUM     Keep NUM recent snapshots and destroy older snapshots.
   -l, --label=LAB    LAB is usually 'hourly', 'daily', or 'monthly'.
+  -L, --local-time   Use local time for snapshot names instead of UTC.
   -p, --prefix=PRE   PRE is 'zfs-auto-snap' by default.
   -q, --quiet        Suppress warnings and notices at the console.
       --send-full=F  Send zfs full backup. Unimplemented.
@@ -52,7 +53,7 @@ Installation:
 -------------
 
 ```
-git clone git@github.com:GrayXu/zfs-auto-snapshot.git
+git clone git@github.com:CoryAlbrecht/zfs-auto-snapshot.git
 cd zfs-auto-snapshot
 make install
 zfs set com.sun:auto-snapshot=true tank
