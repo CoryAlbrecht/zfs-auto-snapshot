@@ -20,7 +20,7 @@
 #
 
 # Set the field separator to a literal tab and newline.
-IFS="	
+IFS="
 "
 
 # Set default program options.
@@ -43,6 +43,7 @@ opt_pre_snapshot=''
 opt_post_snapshot=''
 opt_do_snapshots=1
 opt_min_size=0
+opt_changed=0
 opt_local=0
 
 # Global summary statistics.
@@ -58,6 +59,7 @@ print_usage ()
 {
 	echo "Usage: $0 [options] [-l label] <'//' | name [name...]>
   --default-exclude  Exclude datasets if com.sun:auto-snapshot is unset.
+  -c, --changed      Snap only if data written > 0.
   -d, --debug        Print debugging messages.
   -e, --event=EVENT  Set the com.sun:auto-snapshot-desc property to EVENT.
       --fast         Use a faster zfs list invocation.
@@ -77,7 +79,7 @@ print_usage ()
   -v, --verbose      Print info messages.
       --destroy-only Only destroy older snapshots, do not create new ones.
       name           Filesystem and volume names, or '//' for all ZFS datasets.
-" 
+"
 }
 
 
@@ -164,27 +166,40 @@ do_snapshots () # properties, flags, snapname, oldglob, [targets...]
 
 	for ii in $TARGETS
 	do
-                # Check if size check is > 0
-                size_check_skip=0
-                if [ "$opt_min_size" -gt 0 ]
-                then
-                        bytes_written=`zfs get -Hp -o value written $ii`
-                        kb_written=$(( $bytes_written / 1024 ))
-                        if [ "$kb_written" -lt "$opt_min_size" ]
-                        then
-                                size_check_skip=1
-                                if [ $opt_verbose -gt 0 ]
-                                then
-                                        echo "Skipping target $ii, only $kb_written kB written since last snap. opt_min_size is $opt_min_size"
-                                fi
-                        fi
-                fi
+		# Check if size check is > 0
+		size_check_skip=0
+		bytes_written=`zfs get -Hp -o value written $ii`
+		if [ "$opt_min_size" -gt 0 ]
+		then
+				kb_written=$(( $bytes_written / 1024 ))
+				if [ "$kb_written" -lt "$opt_min_size" ]
+				then
+						size_check_skip=1
+						if [ -n "$opt_verbose" ]
+						then
+								echo "Skipping target $ii, only $kb_written kB written since last snap. opt_min_size is $opt_min_size"
+						fi
+				fi
+		fi
 
-                if [ -n "$opt_do_snapshots" -a "$size_check_skip" -eq 0 ]
+		# Force check if data changed
+		if [ "$opt_changed" -eq 1 ]
+		then
+			if [ "$bytes_written" -eq 0 ]
+			then
+					size_check_skip=1
+					if [ -n "$opt_verbose" ]
+					then
+							echo "Skipping target $ii, 0 bytes written since last snap."
+					fi
+			fi
+		fi
+
+		if [ -n "$opt_do_snapshots" -a "$size_check_skip" -eq 0 ]
 		then
 			if [ "$opt_pre_snapshot" != "" ]
 			then
-				do_run "$opt_pre_snapshot $ii $NAME" || RUNSNAP=0
+				do_run "$opt_pre_snapshot $ii $NAME" && RUNSNAP=1 || RUNSNAP=0
 			fi
 			if [ $RUNSNAP -eq 1 ] && do_run "zfs snapshot $PROPS $FLAGS '$ii@$NAME'"
 			then
@@ -202,23 +217,25 @@ do_snapshots () # properties, flags, snapname, oldglob, [targets...]
 		KEEP="$opt_keep"
 
 		# ASSERT: The old snapshot list is sorted by increasing age.
-		for jj in $SNAPSHOTS_OLD
-		do
-			# Check whether this is an old snapshot of the filesystem.
-			if [ -z "${jj#$ii@$GLOB}" ]
-			then
-				KEEP=$(( $KEEP - 1 ))
-				if [ "$KEEP" -le '0' ]
+		if [ "$size_check_skip" -eq 0 ]; then  # if skip creating snapshots, then skip deleting old ones also
+			for jj in $SNAPSHOTS_OLD
+			do
+				# Check whether this is an old snapshot of the filesystem.
+				if [ -z "${jj#$ii@$GLOB}" ]
 				then
-					if do_run "zfs destroy -d $FLAGS '$jj'"
+					KEEP=$(( $KEEP - 1 ))
+					if [ "$KEEP" -le '0' ]
 					then
-						DESTRUCTION_COUNT=$(( $DESTRUCTION_COUNT + 1 ))
-					else
-						WARNING_COUNT=$(( $WARNING_COUNT + 1 ))
+						if do_run "zfs destroy -d $FLAGS '$jj'"
+						then
+							DESTRUCTION_COUNT=$(( $DESTRUCTION_COUNT + 1 ))
+						else
+							WARNING_COUNT=$(( $WARNING_COUNT + 1 ))
+						fi
 					fi
 				fi
-			fi
-		done
+			done
+		fi
 	done
 }
 
@@ -238,7 +255,8 @@ GETOPT=$($GETOPT_BIN \
   --longoptions=debug,help,quiet,syslog,verbose \
   --longoptions=pre-snapshot:,post-snapshot:,destroy-only \
   --longoptions=min-size: \
-  --options=dnshe:l:Lk:p:rs:qgvm: \
+  --longoptions=changed: \
+  --options=dnshe:l:Lk:p:rs:qgcvm: \
   -- "$@" ) \
   || exit 128
 
@@ -247,6 +265,10 @@ eval set -- "$GETOPT"
 while [ "$#" -gt '0' ]
 do
 	case "$1" in
+		(-c|--changed)
+			opt_changed=1
+			shift 1
+			;;
 		(-d|--debug)
 			opt_debug='1'
 			opt_quiet=''
@@ -449,7 +471,7 @@ done
 ZPOOLS_SCRUBBING=$(echo "$ZPOOL_STATUS" | awk -F ': ' \
   '$1 ~ /^ *pool$/ { pool = $2 } ; \
    $1 ~ /^ *scan$/ && $2 ~ /scrub in progress/ { print pool }' \
-  | sort ) 
+  | sort )
 
 # Get a list of pools that cannot do a snapshot.
 ZPOOLS_NOTREADY=$(echo "$ZPOOL_STATUS" | awk -F ': ' \
@@ -573,15 +595,24 @@ do
 		fi
 	done
 
-	# Append this candidate to the recursive snapshot list because it:
+	# Append this candidate to the snapshot list because it:
 	#
 	#   * Does not have an exclusionary property.
 	#   * Is in a pool that can currently do snapshots.
-	#   * Does not have an excluded descendent filesystem.
-	#   * Is not the descendant of an already included filesystem.
 	#
-	print_log debug "Including $ii for recursive snapshot."
-	TARGETS_RECURSIVE="${TARGETS_RECURSIVE:+$TARGETS_RECURSIVE	}$ii" # nb: \t
+	if [ -z "$opt_recursive" ]
+	then
+		print_log debug "Including $ii for regular snapshot."
+		TARGETS_REGULAR="${TARGETS_REGULAR:+$TARGETS_REGULAR	}$ii" # nb: \t
+	else
+		# Append this candidate to the recursive snapshot list because it additionally:
+		#
+		#   * Does not have an excluded descendent filesystem.
+		#   * Is not the descendant of an already included filesystem.
+		#
+		print_log debug "Including $ii for recursive snapshot."
+		TARGETS_RECURSIVE="${TARGETS_RECURSIVE:+$TARGETS_RECURSIVE	}$ii" # nb: \t
+	fi
 done
 
 # Linux lacks SMF and the notion of an FMRI event, but always set this property
